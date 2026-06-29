@@ -15,7 +15,7 @@ LEAK_THRESHOLD = 0.70
 FREQ_BANDS = [(0,1500),(1500,3000),(3000,5000),(5000,9000),(9000,12800)]
 
 
-PARQUET_DIR = Path("data/parquet/Branched")
+PARQUET_DIR = Path("data/parquet/Accelerometer/Branched")
 NL_FILES = [
 
     "No-leak/BR_NL_ND_A1.parquet",
