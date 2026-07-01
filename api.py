@@ -52,6 +52,12 @@ def get_latest():
     t, ar, ld, ts = row
     return {"t": t, "anomaly_ratio": ar, "leak_detected": bool(ld), "timestamp": ts}
 
+@app.delete("/results")
+def reset_results():
+    conn.execute("DELETE FROM results")
+    conn.commit()
+    return {"ok": True}
+
 @app.get("/status")
 def get_status():
     row = conn.execute("SELECT leak_detected, timestamp FROM results ORDER BY id DESC LIMIT 1").fetchone()
