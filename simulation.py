@@ -26,10 +26,28 @@ NL_FILES = [
 ]
 # LEAK_FILE = "Circumferential Crack/BR_CC_0.18 LPS_A1.parquet"
 
+# ---------- SCÉNARIOS ----------
 SCENARIOS = {
-    "ideal": "Circumferential Crack/BR_CC_ND_A1.parquet",
-    "difficile": "Gasket Leak/BR_GL_0.47 LPS_A1.parquet",
-    "bruite": "Longitudinal Crack/BR_LC_Transient_A1.parquet",
+    "sain": {
+        "leak_file": None,
+        "desc": "Aucune fuite — signal de référence (rotation ND/0.18/0.47/Transient)",
+    },
+    "ideal": {
+        "leak_file": "Circumferential Crack/BR_CC_ND_A1.parquet",
+        "desc": "Fissure circulaire, réseau au repos (ND) — cas le plus facile",
+    },
+    "debit_faible": {
+        "leak_file": "Orifice Leak/BR_OL_0.18 LPS_A1.parquet",
+        "desc": "Fuite par orifice, faible débit (0.18 LPS) — cas intermédiaire",
+    },
+    "debit_fort": {
+        "leak_file": "Gasket Leak/BR_GL_0.47 LPS_A1.parquet",
+        "desc": "Fuite au joint, fort débit (0.47 LPS) — bruit hydraulique important",
+    },
+    "transitoire": {
+        "leak_file": "Longitudinal Crack/BR_LC_Transient_A1.parquet",
+        "desc": "Fissure longitudinale pendant un coup de bélier — cas limite",
+    },
 }
 
 # ---------- FEATURES ----------
@@ -62,10 +80,15 @@ def load(path): return pd.read_parquet(PARQUET_DIR/path)["Value"].values
 #     return sig, leak_start 
 
 def build_signal(scenario="ideal"):
-    leak_file = SCENARIOS[scenario]
-    parts = [load(f) for f in NL_FILES] + [load(leak_file), load(leak_file)]
-    sig = np.concatenate(parts)
-    leak_start = sum(len(load(f)) for f in NL_FILES)
+    cfg = SCENARIOS[scenario]
+    if cfg["leak_file"] is None:
+        parts = [load(f) for f in NL_FILES]
+        sig = np.concatenate(parts)
+        leak_start = len(sig)  # jamais atteint
+    else:
+        parts = [load(f) for f in NL_FILES] + [load(cfg["leak_file"]), load(cfg["leak_file"])]
+        sig = np.concatenate(parts)
+        leak_start = sum(len(load(f)) for f in NL_FILES)
     return sig, leak_start
 
 # ---------- SIMULATION ----------
@@ -124,7 +147,8 @@ def main(scenario="ideal"):
     model = joblib.load("models/isolation_forest.pkl")
     scaler = joblib.load("models/scaler.pkl")
     sig, leak_start = build_signal(scenario)
-    print(f"Scénario: {scenario} | Signal: {len(sig)/FS:.0f}s | fuite à t={leak_start/FS:.0f}s\n")
+    print(f"Scénario: {scenario} — {SCENARIOS[scenario]['desc']}")
+    print(f"Signal: {len(sig)/FS:.0f}s | fuite à t={leak_start/FS:.0f}s\n")
     sim = Sim(sig, leak_start, model, scaler)
     t1 = threading.Thread(target=sim.stream)
     t2 = threading.Thread(target=sim.analyze_loop)

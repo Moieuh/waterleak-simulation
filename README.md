@@ -24,9 +24,11 @@ Lance le scénario `ideal` par défaut. Télécharge automatiquement les donnée
 ### Choisir un scénario
 
 ```bash
-python main.py --scenario ideal       # signal propre, fuite franche
-python main.py --scenario difficile   # fort débit, fuite subtile
-python main.py --scenario bruite      # signal transitoire, cas limite
+python main.py --scenario sain            # aucune fuite, signal de référence
+python main.py --scenario ideal           # fissure circulaire, réseau au repos — cas le plus facile
+python main.py --scenario debit_faible    # fuite par orifice, faible débit — cas intermédiaire
+python main.py --scenario debit_fort      # fuite au joint, fort débit — bruit hydraulique important
+python main.py --scenario transitoire     # fissure pendant un coup de bélier — cas limite
 ```
 
 ## Endpoints API
