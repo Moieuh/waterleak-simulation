@@ -1,5 +1,5 @@
 # simulation.py
-import time, threading
+import os, time, threading
 import numpy as np, pandas as pd, joblib
 from pathlib import Path
 from scipy import signal
@@ -14,6 +14,7 @@ CHUNK_SEC = 10          # on traite les 10 dernières secondes
 TICK_SEC = 30           # calcul toutes les 30s fixes
 LEAK_THRESHOLD = 0.70
 FREQ_BANDS = [(0,1500),(1500,3000),(3000,5000),(5000,9000),(9000,12800)]
+API_URL = os.environ.get("WATERLEAK_API_URL", "http://localhost:8000")
 
 
 PARQUET_DIR = Path("data/parquet/Accelerometer/Branched")
@@ -93,9 +94,11 @@ def build_signal(scenario="ideal"):
 
 # ---------- SIMULATION ----------
 class Sim:
-    def __init__(self, sig, leak_start, model, scaler):
+    def __init__(self, sig, leak_start, model, scaler, scenario, run_id=None):
         self.sig = sig; self.leak_start = leak_start
         self.model = model; self.scaler = scaler
+        self.scenario = scenario
+        self.run_id = run_id
         self.pos = 0; self.running = True
 
     def stream(self):
@@ -119,13 +122,15 @@ class Sim:
             leak = anomaly_ratio >= LEAK_THRESHOLD
             t = end/FS
             zone = "FUITE" if start >= self.leak_start else "SAIN"
-            print(f"[t={t:5.0f}s] zone réelle={zone:5} | anomalies={anomaly_ratio:4.0%} | "
-                  f"{'🚨 FUITE DÉTECTÉE' if leak else '✅ normal'}")
+            status = "FUITE DETECTEE" if leak else "normal"
+            print(f"[t={t:5.0f}s] zone reelle={zone:5} | anomalies={anomaly_ratio:4.0%} | {status}")
             try:
-                requests.post("http://localhost:8000/results", json={
+                requests.post(f"{API_URL}/results", json={
                     "t": t,
                     "anomaly_ratio": float(anomaly_ratio),
-                    "leak_detected": bool(leak)
+                    "leak_detected": bool(leak),
+                    "scenario": self.scenario,
+                    "run_id": self.run_id
                 })
             except Exception:
                 pass          
@@ -143,13 +148,13 @@ class Sim:
 #     t1.join(); t2.join()
 #     print("\nSimulation terminée.")
 
-def main(scenario="ideal"):
+def main(scenario="ideal", run_id=None):
     model = joblib.load("models/isolation_forest.pkl")
     scaler = joblib.load("models/scaler.pkl")
     sig, leak_start = build_signal(scenario)
     print(f"Scénario: {scenario} — {SCENARIOS[scenario]['desc']}")
     print(f"Signal: {len(sig)/FS:.0f}s | fuite à t={leak_start/FS:.0f}s\n")
-    sim = Sim(sig, leak_start, model, scaler)
+    sim = Sim(sig, leak_start, model, scaler, scenario, run_id)
     t1 = threading.Thread(target=sim.stream)
     t2 = threading.Thread(target=sim.analyze_loop)
     t1.start(); t2.start()
