@@ -2,7 +2,7 @@
 
 Detection de fuites en temps reel sur un reseau de canalisations via Isolation Forest.
 
-Les mesures viennent en direct d'un ESP32 qui publie sur un broker MQTT (plus de dataset telecharge / rejoue).
+Les mesures viennent en direct d'un ESP32 qui publie sur un broker MQTT.
 
 ## Source des donnees
 
