@@ -5,6 +5,5 @@ numpy
 scipy
 scikit-learn
 joblib
-pyarrow
-huggingface_hub
 requests
+paho-mqtt
