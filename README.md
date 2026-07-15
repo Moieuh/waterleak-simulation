@@ -60,6 +60,15 @@ Variables d'environnement disponibles :
 | `WATERLEAK_MQTT_USER` / `WATERLEAK_MQTT_PASSWORD` | - | Credentials si besoin |
 | `WATERLEAK_API_URL` | `http://localhost:8000` | URL de l'API pour les POST /results |
 | `WATERLEAK_DB_PATH` | `data/results.db` | Base sqlite des resultats |
+| `WATERLEAK_LEAK_THRESHOLD` | `0.85` | Part des dernieres mesures jugees anormales pour declarer une fuite |
+| `WATERLEAK_ANOMALY_WINDOW` | `20` | Nombre de mesures utilisees pour lisser `anomaly_ratio` |
+
+`WATERLEAK_LEAK_THRESHOLD`/`WATERLEAK_ANOMALY_WINDOW` sont volontairement plus stricts que le
+comportement par defaut du modele (seuil 70% sur 10 mesures a l'origine), pour reduire les
+fausses alertes tant que le modele lui-meme n'a pas ete ameliore (cf. matrice de confusion :
+50% de faux positifs sur les mesures normales, mesure faite par Nathan hors pipeline). C'est un
+attenuant, pas une correction : si le modele se trompe de facon systematique sur une condition
+donnee (ex. vanne ouverte), remonter le seuil ne suffira pas a l'empecher de declarer une fuite.
 
 ### Piloter l'ecoute depuis le dashboard
 
@@ -87,5 +96,4 @@ mqtt_ingest.py    <- client MQTT, parsing des messages ESP32
 listener.py       <- boucle d'inference temps reel (predict + POST /results)
 api.py            <- FastAPI (resultats, historique, start/stop de l'ecoute)
 main.py           <- point d'entree (API + ecoute MQTT)
-pipeline.ipynb    <- notebook d'entrainement du modele (reference)
-```
+pipeline.ipynb    <-

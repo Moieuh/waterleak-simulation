@@ -29,6 +29,12 @@ CLEAN_K = 3
 CLEAN_MIN_DURATION_MS = 20
 CLEAN_MARGIN_MS = 10
 
+# numpy >= 2.0 a renomme trapz en trapezoid (et supprime np.trapz) ; on gere les deux.
+try:
+    _trapz = np.trapezoid
+except AttributeError:
+    _trapz = np.trapz
+
 
 # ============================================================
 # 1. DETECTION / SUPPRESSION DES ZONES PARASITES
@@ -138,7 +144,7 @@ def extract_features(signal, fs=FS) -> dict:
     freqs, psd = welch(signal, fs=fs, nperseg=min(4096, len(signal)))
     for f_min, f_max in BANDES_HZ:
         mask = (freqs >= f_min) & (freqs < f_max)
-        energie = np.trapz(psd[mask], freqs[mask]) if mask.any() else 0.0
+        energie = _trapz(psd[mask], freqs[mask]) if mask.any() else 0.0
         features[f"energie_{f_min}_{f_max}hz"] = energie
 
     return features

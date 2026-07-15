@@ -11,8 +11,14 @@ Format observe en live (topic aquaoptim/esp32_001/data_json, via MQTT Explorer) 
     "sample_rate_hz": 20000,
     "adc_pin": "GPIO34",
     "stats": {...},
-    "samples": [1847, 1844, ...]
+    "samples": [1847, 1844, ...]   <- ~200 echantillons par message, pas 20000 !
 }
+
+Chaque message ne contient qu'un petit paquet (~200 echantillons, ~10ms) d'un flux
+continu, pas une mesure complete comme les captures d'1s/20000 echantillons utilisees
+a l'entrainement. L'accumulation en fenetres de taille comparable a l'entrainement se
+fait dans listener.py, pas ici : ce module se contente de livrer les paquets bruts,
+non centres, dans l'ordre (chunk_index sert a listener.py pour detecter les trous).
 """
 import json
 import os
@@ -30,24 +36,31 @@ MQTT_PASSWORD = os.environ.get("WATERLEAK_MQTT_PASSWORD")
 
 
 def _decode(payload: bytes):
-    """Parse un message MQTT brut. Retourne (signal_centre, data_brut)."""
+    """Parse un message MQTT brut. Retourne (echantillons_bruts, data_brut).
+    Pas de centrage ici : un paquet de ~200 echantillons est trop court pour
+    calculer une moyenne representative. Le centrage se fait dans listener.py,
+    une fois plusieurs paquets accumules en une fenetre complete."""
     data = json.loads(payload)
     samples = np.array(data["samples"], dtype=np.float64)
-    signal = samples - np.mean(samples)
-    return signal, data
+    return samples, data
 
 
 def parse_payload(payload: bytes) -> np.ndarray:
-    """Parse un message MQTT et retourne le signal centre (signal - moyenne),
-    comme le fait charger_signaux() dans le notebook."""
-    signal, _ = _decode(payload)
-    return signal
+    """Utilitaire de test/inspection : parse UN SEUL message MQTT et retourne
+    son signal centre (signal - moyenne de ce paquet uniquement). Le pipeline
+    live n'utilise pas cette fonction pour l'inference (voir listener.py, qui
+    accumule plusieurs paquets avant de centrer)."""
+    samples, _ = _decode(payload)
+    return samples - np.mean(samples)
 
 
 class MqttListener:
     """
-    Se connecte au broker, s'abonne a MQTT_TOPIC, et pousse chaque mesure
-    recue dans une queue consommee par listener.py.
+    Se connecte au broker, s'abonne a MQTT_TOPIC, et pousse chaque paquet recu
+    dans une queue consommee par listener.py.
+
+    Chaque element pousse dans la queue est un dict :
+    {"samples": <np.ndarray brut, non centre>, "chunk_index": ..., "sample_rate_hz": ...}
 
     La connexion est geree en arriere-plan (connect_async + loop_start) avec
     retries automatiques : si le broker est injoignable au demarrage ou se
@@ -61,13 +74,15 @@ class MqttListener:
     """
 
     def __init__(self, host=MQTT_HOST, port=MQTT_PORT, topic=MQTT_TOPIC,
-                 username=MQTT_USER, password=MQTT_PASSWORD):
+                 username=MQTT_USER, password=MQTT_PASSWORD, verbose=True):
         self.host = host
         self.port = port
         self.topic = topic
+        self.verbose = verbose
         self.data_queue = queue.Queue()
         self.connected = threading.Event()
         self._last_chunk_index = None
+        self.n_received = 0
 
         try:
             self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
@@ -108,12 +123,30 @@ class MqttListener:
             # nouvelle mesure en direct -> on l'ignore
             return
         try:
-            signal, data = _decode(msg.payload)
+            samples, data = _decode(msg.payload)
             chunk_index = data.get("chunk_index")
             if chunk_index is not None and chunk_index == self._last_chunk_index:
-                return  # meme mesure deja traitee, evite les doublons
+                return  # meme paquet deja traite, evite les doublons
             self._last_chunk_index = chunk_index
-            self.data_queue.put(signal)
+            self.n_received += 1
+
+            if self.verbose:
+                stats = data.get("stats", {})
+                print(
+                    f"MQTT #{self.n_received} recu sur '{msg.topic}' | "
+                    f"chunk_index={chunk_index} | "
+                    f"sample_rate_hz={data.get('sample_rate_hz')} | "
+                    f"{len(samples)} echantillons | "
+                    f"premiers bruts={data.get('samples', [])[:5]} | "
+                    f"raw_mean={stats.get('raw_mean')} raw_std={stats.get('raw_std')} "
+                    f"raw_peak_to_peak={stats.get('raw_peak_to_peak')}"
+                )
+
+            self.data_queue.put({
+                "samples": samples,
+                "chunk_index": chunk_index,
+                "sample_rate_hz": data.get("sample_rate_hz"),
+            })
         except Exception as e:
             print(f"MQTT: message ignore ({e})")
 
@@ -128,5 +161,6 @@ class MqttListener:
         self.client.disconnect()
 
     def get(self, timeout=None):
-        """Recupere la prochaine mesure (bloquant, leve queue.Empty si timeout)."""
+        """Recupere le prochain paquet (bloquant, leve queue.Empty si timeout).
+        Retourne un dict {samples, chunk_index, sample_rate_hz}."""
         return self.data_queue.get(timeout=timeout)
