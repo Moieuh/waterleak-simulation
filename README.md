@@ -60,8 +60,8 @@ Variables d'environnement disponibles :
 | `WATERLEAK_MQTT_USER` / `WATERLEAK_MQTT_PASSWORD` | - | Credentials si besoin |
 | `WATERLEAK_API_URL` | `http://localhost:8000` | URL de l'API pour les POST /results |
 | `WATERLEAK_DB_PATH` | `data/results.db` | Base sqlite des resultats |
-| `WATERLEAK_LEAK_THRESHOLD` | `0.85` | Part des dernieres mesures jugees anormales pour declarer une fuite |
-| `WATERLEAK_ANOMALY_WINDOW` | `20` | Nombre de mesures utilisees pour lisser `anomaly_ratio` |
+| `WATERLEAK_LEAK_THRESHOLD` | `0.70` | Part des dernieres mesures jugees anormales pour declarer une fuite |
+| `WATERLEAK_ANOMALY_WINDOW` | `15` | Nombre de mesures utilisees pour lisser `anomaly_ratio` |
 
 `WATERLEAK_LEAK_THRESHOLD`/`WATERLEAK_ANOMALY_WINDOW` sont volontairement plus stricts que le
 comportement par defaut du modele (seuil 70% sur 10 mesures a l'origine), pour reduire les
@@ -69,6 +69,14 @@ fausses alertes tant que le modele lui-meme n'a pas ete ameliore (cf. matrice de
 50% de faux positifs sur les mesures normales, mesure faite par Nathan hors pipeline). C'est un
 attenuant, pas une correction : si le modele se trompe de facon systematique sur une condition
 donnee (ex. vanne ouverte), remonter le seuil ne suffira pas a l'empecher de declarer une fuite.
+
+`ANOMALY_WINDOW=15` a ete choisi apres test empirique (rejeu des 60 captures labellisees
+avec_fuite/sans_fuite) : compare a 20, il reduit le retard de detection apres un changement
+d'etat sans augmenter les erreurs de statut en regime stable ; compare a 10, il evite que le
+lissage devienne trop court face au bruit du modele. Chaque resultat expose aussi
+`anomaly_score` (le `decision_function` du modele), qui reagit immediatement fenetre par
+fenetre sans le retard du lissage sur `ANOMALY_WINDOW` mesures — a afficher en complement du
+badge fuite/normal, pas a sa place, si besoin d'un retour plus reactif.
 
 ### Piloter l'ecoute depuis le dashboard
 

@@ -41,9 +41,17 @@ WINDOW_SAMPLES = int(os.environ.get("WATERLEAK_WINDOW_SAMPLES", features.FS))
 # 50% de faux positifs sur les mesures "normal" en test chez Nathan). Ce
 # reglage attenue le symptome, il ne corrige pas le modele lui-meme. Chaque
 # "mesure" lissee ici correspond maintenant a une vraie fenetre de ~1s (et non
-# plus a un paquet MQTT de 10ms), donc ANOMALY_WINDOW=20 lisse sur ~20s reelles.
+# plus a un paquet MQTT de 10ms), donc ANOMALY_WINDOW=15 lisse sur ~15s reelles.
+#
+# ANOMALY_WINDOW=15 a ete choisi apres test empirique (rejeu des 60 captures
+# labellisees avec_fuite/sans_fuite, cf. simulation.zip) compare a 20 et 10 :
+# 15 reduit le retard de detection apres un changement d'etat (7-4 fichiers
+# contre 9-8 a 20) SANS augmenter le nombre d'erreurs de statut en regime
+# stable (5-3 contre 7-4 a 20) ; a 10, le retard baisse encore mais le
+# clignotement remonte au niveau de 20 (fenetre trop courte face au bruit
+# du modele, ~43% de faux positifs sur "normal").
 LEAK_THRESHOLD = float(os.environ.get("WATERLEAK_LEAK_THRESHOLD", "0.70"))
-ANOMALY_WINDOW = int(os.environ.get("WATERLEAK_ANOMALY_WINDOW", "20"))
+ANOMALY_WINDOW = int(os.environ.get("WATERLEAK_ANOMALY_WINDOW", "15"))
 SOURCE_LABEL = "esp32_live"
 
 
@@ -161,6 +169,12 @@ class Listener:
             x = features.extract_feature_vector(clean).reshape(1, -1)
             xs = self.scaler.transform(x)
             pred = self.model.predict(xs)[0]  # -1 = anomalie, 1 = normal
+            # Score continu (decision_function) en plus du predict binaire :
+            # positif = plutot normal, negatif = plutot anomalie. Contrairement
+            # a anomaly_ratio (lisse sur ANOMALY_WINDOW mesures), ce score
+            # reagit immediatement fenetre par fenetre, sans le retard du
+            # lissage. Expose en plus du badge binaire, pas a sa place.
+            score = float(self.model.decision_function(xs)[0])
 
             self.recent_preds.append(1 if pred == -1 else 0)
             anomaly_ratio = float(np.mean(self.recent_preds))
@@ -169,11 +183,12 @@ class Listener:
             t = time.time() - self.start_time
             status = "FUITE DETECTEE" if leak else "normal"
             print(f"[t={t:6.1f}s] anomalies={anomaly_ratio:4.0%} (seuil {LEAK_THRESHOLD:.0%}, "
-                  f"fenetre {len(self.recent_preds)}/{ANOMALY_WINDOW}) | {status}")
+                  f"fenetre {len(self.recent_preds)}/{ANOMALY_WINDOW}) | score={score:+.4f} | {status}")
 
             requests.post(f"{API_URL}/results", json={
                 "t": t,
                 "anomaly_ratio": anomaly_ratio,
+                "anomaly_score": score,
                 "leak_detected": bool(leak),
                 "scenario": SOURCE_LABEL,
                 "run_id": self.run_id,

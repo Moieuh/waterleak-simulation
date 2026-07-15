@@ -52,6 +52,9 @@ if "scenario" not in columns:
 if "run_id" not in columns:
     conn.execute("ALTER TABLE results ADD COLUMN run_id TEXT")
     conn.commit()
+if "anomaly_score" not in columns:
+    conn.execute("ALTER TABLE results ADD COLUMN anomaly_score REAL")
+    conn.commit()
 
 history_columns = {row[1] for row in conn.execute("PRAGMA table_info(results_history)").fetchall()}
 if "scenario" not in history_columns:
@@ -59,6 +62,9 @@ if "scenario" not in history_columns:
     conn.commit()
 if "run_id" not in history_columns:
     conn.execute("ALTER TABLE results_history ADD COLUMN run_id TEXT")
+    conn.commit()
+if "anomaly_score" not in history_columns:
+    conn.execute("ALTER TABLE results_history ADD COLUMN anomaly_score REAL")
     conn.commit()
 
 
@@ -68,6 +74,11 @@ class Result(BaseModel):
     leak_detected: bool
     scenario: Optional[str] = None
     run_id: Optional[str] = None
+    # Score continu (decision_function du modele), en plus du anomaly_ratio
+    # lisse : reagit immediatement fenetre par fenetre, sans le retard du
+    # lissage sur ANOMALY_WINDOW mesures. Optionnel pour ne pas casser
+    # d'anciens clients qui ne l'enverraient pas.
+    anomaly_score: Optional[float] = None
 
 
 listening_lock = threading.Lock()
@@ -95,8 +106,8 @@ def get_live_run_id():
 
 def archive_current_results():
     conn.execute("""
-        INSERT INTO results_history (t, anomaly_ratio, leak_detected, scenario, run_id, timestamp)
-        SELECT t, anomaly_ratio, leak_detected, scenario, run_id, timestamp
+        INSERT INTO results_history (t, anomaly_ratio, leak_detected, scenario, run_id, timestamp, anomaly_score)
+        SELECT t, anomaly_ratio, leak_detected, scenario, run_id, timestamp, anomaly_score
         FROM results
     """)
     conn.execute("DELETE FROM results")
@@ -106,8 +117,9 @@ def archive_current_results():
 @app.post("/results")
 def push_result(r: Result):
     conn.execute(
-        "INSERT INTO results (t, anomaly_ratio, leak_detected, scenario, run_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-        (r.t, r.anomaly_ratio, int(r.leak_detected), r.scenario, r.run_id, datetime.now().isoformat()),
+        "INSERT INTO results (t, anomaly_ratio, leak_detected, scenario, run_id, timestamp, anomaly_score) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (r.t, r.anomaly_ratio, int(r.leak_detected), r.scenario, r.run_id, datetime.now().isoformat(), r.anomaly_score),
     )
     conn.commit()
     return {"ok": True}
@@ -118,7 +130,8 @@ def get_results():
     live_run_id = get_live_run_id()
     if live_run_id:
         rows = conn.execute(
-            "SELECT t, anomaly_ratio, leak_detected, scenario, run_id, timestamp FROM results WHERE run_id = ? ORDER BY id",
+            "SELECT t, anomaly_ratio, leak_detected, scenario, run_id, timestamp, anomaly_score "
+            "FROM results WHERE run_id = ? ORDER BY id",
             (live_run_id,),
         ).fetchall()
     else:
@@ -127,7 +140,8 @@ def get_results():
         ).fetchone()
         if row:
             rows = conn.execute(
-                "SELECT t, anomaly_ratio, leak_detected, scenario, run_id, timestamp FROM results WHERE scenario = ? ORDER BY id",
+                "SELECT t, anomaly_ratio, leak_detected, scenario, run_id, timestamp, anomaly_score "
+                "FROM results WHERE scenario = ? ORDER BY id",
                 (row[0],),
             ).fetchall()
         else:
@@ -140,18 +154,19 @@ def get_results():
             "scenario": scenario,
             "run_id": run_id,
             "timestamp": ts,
+            "anomaly_score": score,
         }
-        for t, ar, ld, scenario, run_id, ts in rows
+        for t, ar, ld, scenario, run_id, ts, score in rows
     ]
 
 
 @app.get("/results/history")
 def get_results_history():
     rows = conn.execute("""
-        SELECT t, anomaly_ratio, leak_detected, scenario, run_id, timestamp, 0 AS source_order, id
+        SELECT t, anomaly_ratio, leak_detected, scenario, run_id, timestamp, anomaly_score, 0 AS source_order, id
         FROM results_history
         UNION ALL
-        SELECT t, anomaly_ratio, leak_detected, scenario, run_id, timestamp, 1 AS source_order, id
+        SELECT t, anomaly_ratio, leak_detected, scenario, run_id, timestamp, anomaly_score, 1 AS source_order, id
         FROM results
         ORDER BY timestamp, source_order, id
     """).fetchall()
@@ -163,8 +178,9 @@ def get_results_history():
             "scenario": scenario,
             "run_id": run_id,
             "timestamp": ts,
+            "anomaly_score": score,
         }
-        for t, ar, ld, scenario, run_id, ts, _source_order, _id in rows
+        for t, ar, ld, scenario, run_id, ts, score, _source_order, _id in rows
     ]
 
 
@@ -173,16 +189,18 @@ def get_latest():
     live_run_id = get_live_run_id()
     if live_run_id:
         row = conn.execute(
-            "SELECT t, anomaly_ratio, leak_detected, scenario, run_id, timestamp FROM results WHERE run_id = ? ORDER BY id DESC LIMIT 1",
+            "SELECT t, anomaly_ratio, leak_detected, scenario, run_id, timestamp, anomaly_score "
+            "FROM results WHERE run_id = ? ORDER BY id DESC LIMIT 1",
             (live_run_id,),
         ).fetchone()
     else:
         row = conn.execute(
-            "SELECT t, anomaly_ratio, leak_detected, scenario, run_id, timestamp FROM results ORDER BY id DESC LIMIT 1"
+            "SELECT t, anomaly_ratio, leak_detected, scenario, run_id, timestamp, anomaly_score "
+            "FROM results ORDER BY id DESC LIMIT 1"
         ).fetchone()
     if not row:
         return {"message": "Pas encore de resultats"}
-    t, ar, ld, scenario, run_id, ts = row
+    t, ar, ld, scenario, run_id, ts, score = row
     return {
         "t": t,
         "anomaly_ratio": ar,
@@ -190,6 +208,7 @@ def get_latest():
         "scenario": scenario,
         "run_id": run_id,
         "timestamp": ts,
+        "anomaly_score": score,
     }
 
 
